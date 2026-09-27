@@ -8,6 +8,7 @@ Repositorio para proyectos Arduino, ESP32, ESP32-S3, firmware y sistemas embebid
 - `esp32-wsp/` — prototipo ESP32-S3 de mensajería bidireccional WhatsApp mediante Google Apps Script/Twilio, con sketch Arduino, relay y pruebas. Procedencia: `wpv10barza/esp32-wsp`.
 - `esp-3c-prueba/` — firmware ESP32-C3 para el puente hacia Asistente 3C, con contrato HTTP, persistencia NVS, reintentos e integración de CI. Procedencia: `wpv10barza/esp-3c-prueba`.
 - `esp32-demo/` — proyecto Waveshare ESP32-S3 para cuenta regresiva de Google Calendar, con perfil de hardware, detección segura de placa y automatización de compilación/carga. Procedencia: `wpv10barza/esp32-demo`.
+- `MAX30102-webserver/` — proyecto MicroPython para ESP32 con sensor MAX30102/MAX30105, lectura I2C, cálculo de BPM/temperatura y servidor web local. Procedencia: `wpv10barza/MAX30102-webserver`.
 
 ## Criterio de organización
 
