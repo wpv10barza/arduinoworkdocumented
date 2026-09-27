@@ -1,0 +1,41 @@
+name: ESP32-C3 firmware
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: esp-hi-c3-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PlatformIO
+        run: pip install "platformio==6.1.18"
+      - name: Validate API contract JSON
+        run: python -m json.tool contract/device-command-v1.json >/dev/null
+      - name: Create non-secret CI configuration
+        run: cp include/local_config.example.h include/local_config.h
+      - name: Compile ESP32-C3 firmware
+        run: pio run --environment esp-hi-c3
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp-hi-c3-firmware
+          path: |
+            .pio/build/esp-hi-c3/firmware.bin
+            .pio/build/esp-hi-c3/bootloader.bin
+            .pio/build/esp-hi-c3/partitions.bin
+          if-no-files-found: error
+
