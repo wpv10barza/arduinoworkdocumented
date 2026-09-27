@@ -1,0 +1,16 @@
+# Local credentials
+firmware/whatsapp_gateway/secrets.h
+
+# Arduino / PlatformIO output
+build/
+.pio/
+*.bin
+*.elf
+*.map
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+

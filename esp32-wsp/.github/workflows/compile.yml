@@ -1,0 +1,46 @@
+name: Compile ESP32-S3 firmware
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 core and ArduinoJson
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.11
+          arduino-cli lib install ArduinoJson@7.4.3
+
+      - name: Create compile-only configuration
+        run: cp firmware/whatsapp_gateway/secrets.example.h firmware/whatsapp_gateway/secrets.h
+
+      - name: Compile for Waveshare ESP32-S3 profile
+        run: >-
+          arduino-cli compile
+          --warnings all
+          --fqbn 'esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PSRAM=opi,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB'
+          firmware/whatsapp_gateway
+
+      - name: Check Apps Script syntax
+        run: |
+          cp gateway/google-apps-script/Code.gs /tmp/Code.js
+          node --check /tmp/Code.js
+
+      - name: Test cloud relay behavior
+        run: node --test tests/gateway.test.js
