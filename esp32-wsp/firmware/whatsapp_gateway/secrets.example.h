@@ -16,8 +16,12 @@
 // server certificate, so it is vulnerable to man-in-the-middle attacks.
 #define USE_INSECURE_TLS 1
 
+// If USE_INSECURE_TLS is 0, define GATEWAY_ROOT_CA as adjacent C string
+// literals containing the maintained PEM certificate and explicit \n markers.
+
 #define POLL_INTERVAL_MS 5000UL
 #define WIFI_CONNECT_TIMEOUT_MS 20000UL
 #define HTTP_TIMEOUT_MS 15000U
 
+// Set to 1 only after basic receive/poll testing works.
 #define SEND_BOOT_MESSAGE 0
