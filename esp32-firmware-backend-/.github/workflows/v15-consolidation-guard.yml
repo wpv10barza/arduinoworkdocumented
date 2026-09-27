@@ -1,0 +1,23 @@
+name: V15 Controlled Consolidation Guard
+
+on:
+  push:
+    branches:
+      - main
+      - 'fix/**'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  v15-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bash syntax
+        run: bash -n scripts/consolidate_V15_FINAL.sh
+
+      - name: Controlled consolidation tests
+        run: bash tests/test_v15_consolidation.sh

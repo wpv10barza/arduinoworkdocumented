@@ -1,0 +1,198 @@
+name: Firmware and site artifact
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout real Asistente 3C Monitor
+        uses: actions/checkout@v4
+        with:
+          repository: wpv10barza/asistente-3c
+          ref: 9343e00dfa0932c660f06738ab26b46d14df50b5
+          path: monitor
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Reject local secrets
+        run: |
+          test ! -f include/local_config.h
+          ! git ls-files | grep -Ei 'credentials|service-account|\.env$'
+
+      - name: Validate WSL flash script contract
+        run: |
+          bash -n scripts/flash-panel.sh
+          grep -q 'ENVIRONMENT="panel_4848s040"' scripts/flash-panel.sh
+          grep -q 'pio run -e "$ENVIRONMENT" -t upload --upload-port "$PORT"' scripts/flash-panel.sh
+          grep -q 'pio device monitor --port "$PORT" --baud "$BAUD"' scripts/flash-panel.sh
+
+      - name: Validate Windows to WSL setup scripts
+        run: |
+          bash -n scripts/setup-wsl-env.sh
+          test -s scripts/connect-esp32-wsl.ps1
+          grep -q 'usbipd bind --busid' scripts/connect-esp32-wsl.ps1
+          grep -q 'usbipd attach --wsl --busid' scripts/connect-esp32-wsl.ps1
+          grep -q 'VENV_DIR="${VENV_DIR:-.venv}"' scripts/setup-wsl-env.sh
+          grep -q 'PLATFORMIO_VERSION="\${PLATFORMIO_VERSION:-6.2.0}"' scripts/setup-wsl-env.sh
+          grep -q '/dev/ttyACM' scripts/setup-wsl-env.sh
+          grep -q '/dev/ttyUSB' scripts/setup-wsl-env.sh
+          grep -q 'python3 -m venv' scripts/setup-wsl-env.sh
+          grep -q 'python3 -m venv --upgrade' scripts/setup-wsl-env.sh
+          grep -q 'Get-FileHash' scripts/connect-esp32-wsl.ps1
+
+      - name: Test Wi-Fi source contract
+        run: python tests/test_wifi_source.py
+
+      - name: Test backend discovery contract
+        run: python tests/test_backend_discovery.py
+
+      - name: Test panel E2E state contract
+        run: python tests/test_panel_state_contract.py
+
+      - name: Test runtime command editor integration
+        run: python tests/test_command_editor_integration.py
+
+      - name: Install and test real Monitor
+        working-directory: monitor
+        env:
+          GEMINI_API_KEY: ci-placeholder
+          ESP32_API_TOKEN: ci-e2e-token
+          PORT: "3000"
+          ALLOW_INSECURE_DEVICE_API: "false"
+        run: |
+          npm ci
+          npm run lint
+          find test -type f -name '*.test.ts' -print0 | xargs -0 node --import tsx --test
+
+      - name: Start real Monitor for ESP32 E2E
+        env:
+          GEMINI_API_KEY: ci-placeholder
+          ESP32_API_TOKEN: ci-e2e-token
+          VITE_E2E_MODE: "true"
+          PORT: "3000"
+          ALLOW_INSECURE_DEVICE_API: "false"
+        run: |
+          mkdir -p .ci
+          nohup npm --prefix monitor run dev > .ci/monitor.log 2>&1 &
+          echo $! > .ci/monitor.pid
+          python - <<'PY'
+          import time
+          import urllib.request
+          url = "http://127.0.0.1:3000/api/device/v1/health"
+          last = None
+          for _ in range(30):
+              try:
+                  with urllib.request.urlopen(url, timeout=2) as response:
+                      if response.status == 200:
+                          print(response.read().decode())
+                          raise SystemExit(0)
+              except Exception as exc:
+                  last = exc
+              time.sleep(1)
+          raise SystemExit(f"Monitor health did not come up: {last}")
+          PY
+
+      - name: Run real Monitor ↔ ESP32 device API E2E
+        env:
+          DEVICE_API_BASE_URL: http://127.0.0.1:3000
+          ESP32_API_TOKEN: ci-e2e-token
+          DEVICE_API_PORT: "3000"
+        run: python tests/test_device_api_e2e.py
+
+      - name: Install browser E2E runner
+        working-directory: e2e
+        run: |
+          npm init -y
+          npm install --no-save @playwright/test@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Run real Monitor UI E2E
+        env:
+          MONITOR_BASE_URL: http://127.0.0.1:3000
+          ESP32_API_TOKEN: ci-e2e-token
+        run: e2e/node_modules/.bin/playwright test e2e/monitor_ui.spec.mjs --reporter=line
+
+      - name: Dump Monitor log on failure
+        if: failure()
+        run: |
+          test ! -f .ci/monitor.log || cat .ci/monitor.log
+
+      - name: Stop real Monitor
+        if: always()
+        run: |
+          test ! -f .ci/monitor.pid || kill "$(cat .ci/monitor.pid)" || true
+
+      - name: Install PlatformIO
+        run: pip install platformio==6.2.0
+
+      - name: Verify PlatformIO Core
+        run: pio --version
+
+      - name: Run standalone native component tests
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/bin
+          g++ -std=c++17 -Wall -Wextra -Werror -Iinclude tests/test_command_buffer_native.cpp -o .ci/bin/command_buffer_native
+          .ci/bin/command_buffer_native
+          g++ -std=c++17 -Wall -Wextra -Werror -Iinclude test/command_text_viewport_test.cpp -o .ci/bin/command_text_viewport_test
+          .ci/bin/command_text_viewport_test
+          g++ -std=c++17 -Wall -Wextra -Werror -Iinclude test/virtual_keyboard_hit_test.cpp -o .ci/bin/virtual_keyboard_hit_test
+          .ci/bin/virtual_keyboard_hit_test
+          python test/command_buffer_regression.py
+
+      - name: Compile ESP32-S3-4848S040
+        run: pio run --environment panel_4848s040
+
+      - name: Package reproducible binaries
+        run: |
+          mkdir -p dist
+          cp .pio/build/panel_4848s040/firmware.bin dist/
+          cp .pio/build/panel_4848s040/bootloader.bin dist/
+          cp .pio/build/panel_4848s040/partitions.bin dist/
+          cp .pio/build/panel_4848s040/firmware.elf dist/
+          printf '%s\n' '0x0000 bootloader.bin' '0x8000 partitions.bin' '0x10000 firmware.bin' > dist/flash-layout.txt
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          sha256sum scripts/connect-esp32-wsl.ps1 scripts/setup-wsl-env.sh scripts/flash-panel.sh > dist/SCRIPT-SHA256SUMS.txt
+          printf '{"source_sha":"%s","environment":"panel_4848s040","validation":"compiled_not_physically_flashed"}\n' "${GITHUB_SHA}" > dist/manifest.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: esp32-s3-4848s040-firmware
+          path: dist/
+          if-no-files-found: error
+
+  site:
+    needs: firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify static site
+        run: |
+          test -s site/index.html
+          grep -q 'ESP32-S3-4848S040' site/index.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: github-pages-site
+          path: site/
+          if-no-files-found: error

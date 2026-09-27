@@ -1,0 +1,135 @@
+name: Real Google Sheets E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-google-sheets-e2e
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout firmware repository
+        uses: actions/checkout@v4
+
+      - name: Checkout real Asistente 3C Monitor
+        uses: actions/checkout@v4
+        with:
+          repository: wpv10barza/asistente-3c
+          ref: 897220b2b09cd5c843a33fb2e0ef8c8ed6cea6a9
+          path: monitor
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Require real E2E secrets
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          E2E_SPREADSHEET_ID: ${{ secrets.E2E_SPREADSHEET_ID }}
+          E2E_SHEET_NAME: ${{ secrets.E2E_SHEET_NAME }}
+          E2E_TASK_NAME: ${{ secrets.E2E_TASK_NAME }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          test -n "$GOOGLE_SERVICE_ACCOUNT_JSON" || { echo "Missing GOOGLE_SERVICE_ACCOUNT_JSON"; exit 2; }
+          test -n "$E2E_SPREADSHEET_ID" || { echo "Missing E2E_SPREADSHEET_ID"; exit 2; }
+          test -n "$E2E_SHEET_NAME" || { echo "Missing E2E_SHEET_NAME"; exit 2; }
+          test -n "$E2E_TASK_NAME" || { echo "Missing E2E_TASK_NAME"; exit 2; }
+          test -n "$GEMINI_API_KEY" || { echo "Missing GEMINI_API_KEY"; exit 2; }
+
+      - name: Install and test real Monitor
+        working-directory: monitor
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ESP32_API_TOKEN: ci-e2e-token
+          PORT: "3000"
+          ALLOW_INSECURE_DEVICE_API: "false"
+        run: |
+          npm ci
+          npm run lint
+          npm test
+
+      - name: Start real Monitor
+        working-directory: monitor
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-2.5-flash
+          ESP32_API_TOKEN: ci-e2e-token
+          VITE_E2E_MODE: "true"
+          PORT: "3000"
+          ALLOW_INSECURE_DEVICE_API: "false"
+        run: |
+          mkdir -p ../.ci
+          nohup npm run dev > ../.ci/monitor-real-e2e.log 2>&1 &
+          echo $! > ../.ci/monitor-real-e2e.pid
+          node - <<'NODE'
+          const http = require('node:http');
+          let lastError = '';
+          const check = () => new Promise((resolve) => {
+            const req = http.get('http://127.0.0.1:3000/api/device/v1/health', (res) => {
+              let body = '';
+              res.on('data', chunk => { body += chunk; });
+              res.on('end', () => {
+                if (res.statusCode === 200) {
+                  console.log(body);
+                  resolve(true);
+                } else {
+                  lastError = `HTTP ${res.statusCode}: ${body}`;
+                  resolve(false);
+                }
+              });
+            });
+            req.on('error', error => {
+              lastError = error.message;
+              resolve(false);
+            });
+            req.setTimeout(2000, () => {
+              lastError = 'health timeout';
+              req.destroy();
+              resolve(false);
+            });
+          });
+          (async () => {
+            for (let attempt = 0; attempt < 30; attempt += 1) {
+              if (await check()) process.exit(0);
+              await new Promise(r => setTimeout(r, 1000));
+            }
+            console.error(`Monitor did not become healthy: ${lastError}`);
+            process.exit(1);
+          })();
+          NODE
+
+      - name: Install browser E2E runner
+        run: |
+          mkdir -p e2e-runner
+          cd e2e-runner
+          npm init -y
+          npm install --no-save @playwright/test@1.55.0 google-auth-library@9.15.1
+          npx playwright install --with-deps chromium
+
+      - name: Run real Google Sheets E2E
+        env:
+          MONITOR_BASE_URL: http://127.0.0.1:3000
+          ESP32_API_TOKEN: ci-e2e-token
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          E2E_SPREADSHEET_ID: ${{ secrets.E2E_SPREADSHEET_ID }}
+          E2E_SHEET_NAME: ${{ secrets.E2E_SHEET_NAME }}
+          E2E_TASK_NAME: ${{ secrets.E2E_TASK_NAME }}
+          E2E_HEADER_ROW: "4"
+        run: e2e-runner/node_modules/.bin/playwright test e2e/monitor_google_sheets.spec.mjs --reporter=line
+
+      - name: Dump Monitor log on failure
+        if: failure()
+        run: |
+          test ! -f .ci/monitor-real-e2e.log || cat .ci/monitor-real-e2e.log
+
+      - name: Stop real Monitor
+        if: always()
+        run: |
+          test ! -f .ci/monitor-real-e2e.pid || kill "$(cat .ci/monitor-real-e2e.pid)" || true
