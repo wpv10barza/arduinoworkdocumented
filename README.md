@@ -21,3 +21,8 @@ Se excluyeron dependencias descargadas, entornos virtuales, cachés, artefactos 
 ## Fuentes relacionadas conservadas aparte
 
 Las variantes del panel ESP32-S3-4848S040 y sus repositorios relacionados no se duplican aquí cuando su contenido corresponde a la misma línea de desarrollo. Permanecen en sus repositorios fuente para conservar historial e identidad.
+
+
+## Documentación ESP32 incorporada desde Google Drive
+
+`ESP32_PowerShell_Flash_Databricks/` conserva íntegros el notebook y README del procedimiento de actualización, pruebas y flash del panel ESP32-S3-4848S040. Periodo: octubre de 2026. Tecnologías: PlatformIO, PowerShell, Git y Python. El README de la carpeta detalla su estructura y alcance. Se verifican los archivos por tamaño y hash antes de eliminar sus originales de Drive.
